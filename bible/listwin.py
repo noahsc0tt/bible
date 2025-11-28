@@ -12,6 +12,10 @@ class ListWindow:
         self._item_tuples = item_tuples or []
         self._selected_tuple = (0, "")
         self._bounds = (0, 0)
+        self._hint = ""
+        self._search_query = ""
+        self._search_total = 0
+        self._search_index = 0
         self.select_first()
 
     def select_value(self, value):
@@ -92,6 +96,19 @@ class ListWindow:
             self._bounds = (0, 0)
         self.draw()
 
+    def _prepare_search_meta(self, query):
+        q = str(query).lower()
+        matches = [i for i, v in self._item_tuples if q in str(v).lower()]
+        self._search_query = str(query)
+        self._search_total = len(matches)
+        # Determine current index position among matches
+        cur_idx = self._selected_tuple[0]
+        try:
+            self._search_index = matches.index(cur_idx) + 1 if cur_idx in matches else 0
+        except Exception:
+            self._search_index = 0
+        return matches
+
     def search_select(self, query, start_at_current=True):
         if not self._item_tuples or not query:
             return False
@@ -104,8 +121,11 @@ class ListWindow:
                 self._selected_tuple = self._item_tuples[i]
                 start_bound = max(0, min(i, max(0, n - self.MAX_ITEMS)))
                 self._bounds = (start_bound, start_bound + self.MAX_ITEMS)
+                self._prepare_search_meta(query)
                 self.draw()
                 return True
+        self._prepare_search_meta(query)
+        self.draw()
         return False
 
     def search_next(self, query):
@@ -120,8 +140,11 @@ class ListWindow:
                 self._selected_tuple = self._item_tuples[i]
                 start_bound = max(0, min(i, max(0, n - self.MAX_ITEMS)))
                 self._bounds = (start_bound, start_bound + self.MAX_ITEMS)
+                self._prepare_search_meta(query)
                 self.draw()
                 return True
+        self._prepare_search_meta(query)
+        self.draw()
         return False
 
     def search_prev(self, query):
@@ -136,13 +159,24 @@ class ListWindow:
                 self._selected_tuple = self._item_tuples[i]
                 start_bound = max(0, min(i, max(0, n - self.MAX_ITEMS)))
                 self._bounds = (start_bound, start_bound + self.MAX_ITEMS)
+                self._prepare_search_meta(query)
                 self.draw()
                 return True
+        self._prepare_search_meta(query)
+        self.draw()
         return False
 
     def write_title(self):
+        base = self._title
+        if self._search_query:
+            suffix = f"[{self._search_query}"  # start bracket
+            if self._search_total:
+                # show index if known
+                suffix += f" {self._search_index}/{self._search_total}"
+            suffix += "]"
+            base = f"{self._title} {suffix}"
         self._win.addnstr(
-            0, 0, self._title.center(self._width, " "), self._width, curses.A_UNDERLINE
+            0, 0, base.center(self._width, " "), self._width, curses.A_UNDERLINE
         )
 
     def draw(self):
@@ -169,3 +203,9 @@ class ListWindow:
                     self._win.addnstr(y, 1, string, str_len)
 
         self._win.refresh()
+
+    def clear_search_hint(self):
+        self._search_query = ""
+        self._search_total = 0
+        self._search_index = 0
+        self.draw()

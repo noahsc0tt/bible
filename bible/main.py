@@ -36,6 +36,10 @@ class Main:
             curses.use_default_colors()
             curses.init_pair(1, curses.COLOR_WHITE, -1)
             self.stdscr.bkgd(" ", curses.color_pair(1))
+        try:
+            curses.set_escdelay(25)  # Reduce default ~1000ms ESC delay
+        except Exception:
+            pass
 
         self._last_search = {"win": None, "query": ""}
 
@@ -345,7 +349,6 @@ class Main:
                     if not self.selected_window[1].search_next(last["query"]):
                         curses.beep()
                 else:
-                    # Repeat last search starting from current
                     if last["query"]:
                         if not self.selected_window[1].search_select(
                             last["query"], True
@@ -367,6 +370,11 @@ class Main:
                             curses.beep()
                     else:
                         curses.beep()
+
+            elif key == 27:  # ESC clears search on active column
+                self.selected_window[1].clear_search_hint()
+                if self._last_search["win"] is self.selected_window[1]:
+                    self._last_search = {"win": None, "query": ""}
 
             elif key == ord("f"):
                 if self.selected_window[1] is not self.verses_win:
