@@ -7,11 +7,11 @@ Read the Bible in any translation straight from the terminal.
 
 Using pipx:
 ```shell
-$ python3 -m pipx install git+https://github.com/noahsc0tt/bible@master
+$ python3 -m pipx install git+https://github.com/noahsc0tt/tui-bible@master
 ```
 Using pip:
 ```
-$ python3 -m pip install git+https://github.com/noahsc0tt/bible@master
+$ python3 -m pip install git+https://github.com/noahsc0tt/tui-bible@master
 ```
 
 ## Usage 
