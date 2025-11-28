@@ -36,8 +36,10 @@ class Main:
             self.stdscr.bkgd(" ", curses.color_pair(1))
 
         self.initialize_reader()
+        self.sidebars_visible = True
         self.initialize_windows()
         self.initialize_selections()
+        self.layout_windows()
 
         self.update_selections()
         self.update_text()
@@ -49,6 +51,7 @@ class Main:
         self.reader.set_root("AMP")
 
     def initialize_windows(self):
+        # Create sidebar windows (left columns)
         start_x = 0
         self.translations_win = ListWindow(
             self.stdscr.derwin(curses.LINES, TRANSLATIONS_WIDTH, start_x, 0),
@@ -81,12 +84,40 @@ class Main:
             VERSES_WIDTH,
         )
 
-        start_x += VERSES_WIDTH
-        self.text_width = curses.COLS - start_x
+        # Create text window; actual position/size set by layout_windows()
+        self.text_width = curses.COLS
         self.text_win = TextWindow(
-            self.stdscr.derwin(curses.LINES, self.text_width, 0, start_x),
+            self.stdscr.derwin(curses.LINES, self.text_width, 0, 0),
             self.text_width,
         )
+
+    def layout_windows(self):
+        # Compute layout based on sidebar visibility
+        if self.sidebars_visible:
+            start_x = TRANSLATIONS_WIDTH + BOOKS_WIDTH + CHAPTERS_WIDTH + VERSES_WIDTH
+            self.text_width = curses.COLS - start_x
+            # Recreate text window with new geometry
+            self.text_win = TextWindow(
+                self.stdscr.derwin(curses.LINES, self.text_width, 0, start_x),
+                self.text_width,
+            )
+        else:
+            # Hide sidebars visually by covering them with a full-width text window
+            self.text_width = curses.COLS
+            self.text_win = TextWindow(
+                self.stdscr.derwin(curses.LINES, self.text_width, 0, 0),
+                self.text_width,
+            )
+            # Clear sidebars so they don't show through
+            for win in [
+                self.translations_win,
+                self.books_win,
+                self.chapters_win,
+                self.verses_win,
+            ]:
+                w = win._win
+                w.clear()
+                w.refresh()
 
     def initialize_selections(self):
         self.windows_tuples = make_enumeration(
@@ -173,6 +204,9 @@ class Main:
 
             elif key == ord("g"):
                 self.selected_window[1].select_first()
+
+            elif key == ord("G"):
+                self.selected_window[1].select_last()
 
             self.update_selections()
             self.update_text()
