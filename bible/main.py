@@ -293,7 +293,15 @@ class Main:
                 self.selected_window[1].select_last()
 
             elif key == ord("f"):
-                # Toggle sidebar visibility
+                # First ensure focus is on verses column so j/k navigate verses
+                if self.selected_window[1] is not self.verses_win:
+                    self.deactivate_all_windows()
+                    # Set selected window to verses and activate
+                    for i, win in self.windows_tuples:
+                        if win is self.verses_win:
+                            self.selected_window = (i, win)
+                            break
+                    self.selected_window[1].set_active(True)
                 self.sidebars_visible = not self.sidebars_visible
                 self.layout_windows()
 
