@@ -43,6 +43,8 @@ class Main:
 
         self._last_search = {"win": None, "query": ""}
         self._last_grep = ""
+        self._grep_history = []  # list of dicts: {pattern, scope_translation, scope_book}
+        self._grep_history_idx = -1
         self._grep_override_text = None
         self._grep_override_title = None
         self._grep_results = []  # list of (translation, book, chapter, verse, snippet)
@@ -114,25 +116,37 @@ class Main:
         except Exception:
             pass
 
-    def _prompt_input(self, prompt_text):
+    def _prompt_input_cancelable(self, prompt_text):
         h, w = self.stdscr.getmaxyx()
-        try:
-            curses.echo()
+        buf = []
+        curses.noecho()
+        while True:
             self.stdscr.move(h - 1, 0)
             self.stdscr.clrtoeol()
-            self.stdscr.addnstr(h - 1, 0, prompt_text, max(0, w - 1))
+            display = prompt_text + "".join(buf)
+            self.stdscr.addnstr(h - 1, 0, display, max(0, w - 1))
             self.stdscr.refresh()
-            s = self.stdscr.getstr(
-                h - 1, len(prompt_text), max(1, w - len(prompt_text) - 1)
-            )
-            return s.decode("utf-8").strip()
-        except Exception:
-            return ""
-        finally:
-            curses.noecho()
-            self.stdscr.move(h - 1, 0)
-            self.stdscr.clrtoeol()
-            self.stdscr.refresh()
+            ch = self.stdscr.getch()
+            if ch in (10, 13):  # Enter
+                break
+            if ch == 27:  # ESC cancel
+                buf = None
+                break
+            if ch in (curses.KEY_BACKSPACE, 127):
+                if buf:
+                    buf.pop()
+                continue
+            if 32 <= ch <= 126:  # printable ASCII
+                if len(buf) < w - len(prompt_text) - 1:
+                    buf.append(chr(ch))
+        # Clear prompt line
+        self.stdscr.move(h - 1, 0)
+        self.stdscr.clrtoeol()
+        self.stdscr.refresh()
+        if buf is None:
+            return None
+        s = "".join(buf).strip()
+        return s if s else ""
 
     def initialize_reader(self):
         self.reader = Reader()
@@ -247,7 +261,10 @@ class Main:
             self.text_win.update_text_title(
                 self._grep_override_title or " GREP RESULTS"
             )
-            self.text_win.update_text(self._grep_override_text)
+            self.text_win.update_text(
+                self._grep_override_text,
+                highlight_terms=[self._last_grep] if self._last_grep else None,
+            )
             return
 
         trans_name = self.translations_win.get_selection_tuple()[1]
@@ -263,7 +280,11 @@ class Main:
             book_name, str(chapter_name[0]), trans_name, verse_int
         )
         if self._grep_results and self._grep_index >= 0:
-            text_title += f" (grep {self._grep_index + 1}/{len(self._grep_results)})"
+            term = self._last_grep or "grep"
+            # Truncate very long term for title readability
+            if len(term) > 20:
+                term = term[:20] + "…"
+            text_title += f" ({term} {self._grep_index + 1}/{len(self._grep_results)})"
 
         raw_text = self.reader.get_chapter_text(
             self.books_win.get_selection_tuple()[1],
@@ -284,7 +305,13 @@ class Main:
         if trans_name == "BSB":
             hint = "\n[Enter]: open current chapter in Frogmouth"
         self.text_win.update_text_title(text_title)
-        self.text_win.update_text(text + hint)
+        highlight_terms = []
+        if self._grep_results and self._grep_index >= 0 and self._last_grep:
+            highlight_terms.append(self._last_grep)
+        # Also highlight active list search term in verses if applicable (book/chapter lists not matched here but harmless)
+        if self._last_search.get("query"):
+            highlight_terms.append(self._last_search.get("query"))
+        self.text_win.update_text(text + hint, highlight_terms=highlight_terms or None)
 
     def deactivate_all_windows(self):
         for i, win in self.windows_tuples:
@@ -325,32 +352,126 @@ class Main:
         if idx < 0 or idx >= len(self._grep_results):
             return
         (translation, book, chapter, verse, snippet) = self._grep_results[idx]
-        # Switch translation
         try:
             self.translations_win.select_value(translation)
         except Exception:
             pass
         self.update_selections()
-        # Select book
         try:
             self.books_win.select_value(book)
         except Exception:
             pass
         self.update_selections()
-        # Select chapter
         try:
             self.chapters_win.select_value(chapter)
         except Exception:
             pass
         self.update_selections()
-        # Select verse
         try:
             self.verses_win.select_value(verse)
         except Exception:
             pass
-        # After jumping, remove override so verse text shows
         self._grep_override_text = None
         self._grep_override_title = None
+
+    def _run_grep(
+        self, pattern, scope_translation=None, scope_book=None, record_history=False
+    ):
+        # Perform grep across translation XML files (with optional scope), map verses
+        results_lines = []
+        structured = []
+        base_dir = Path(__file__).parent / "translations"
+        verse_pattern = re.compile(r"<verse[^>]*?(?:number|n)=[\"'](\d+)[\"']")
+        chapter_pattern = re.compile(r"<chapter[^>]*?(?:number|n)=[\"'](\d+)[\"']")
+        book_pattern = re.compile(r"<book[^>]*?(?:number|n)=[\"'](\d+)[\"']")
+        scoped_book_num = None
+        if scope_book:
+            try:
+                scoped_book_num = BOOK_ORDER.index(scope_book) + 1
+            except Exception:
+                scoped_book_num = None
+        for xmlfile in sorted(base_dir.glob("*.xml")):
+            translation = xmlfile.stem
+            if scope_translation and translation != scope_translation:
+                continue
+            try:
+                with open(xmlfile, "r", encoding="utf-8", errors="ignore") as f:
+                    current_book_num = None
+                    current_chapter_num = None
+                    for lno, line in enumerate(f, 1):
+                        mbook = book_pattern.search(line)
+                        if mbook:
+                            current_book_num = int(mbook.group(1))
+                        mchap = chapter_pattern.search(line)
+                        if mchap:
+                            current_chapter_num = int(mchap.group(1))
+                        if scoped_book_num and current_book_num != scoped_book_num:
+                            continue
+                        if re.search(pattern, line, re.IGNORECASE):
+                            mverse = verse_pattern.search(line)
+                            verse_num = int(mverse.group(1)) if mverse else 1
+                            book_name = None
+                            if (
+                                current_book_num is not None
+                                and 1 <= current_book_num <= len(BOOK_ORDER)
+                            ):
+                                book_name = BOOK_ORDER[current_book_num - 1]
+                            snippet = line.strip()
+                            if len(snippet) > 200:
+                                snippet = snippet[:200] + "…"
+                            scope_tag = ""
+                            if scope_translation:
+                                scope_tag = "(t)"
+                            elif scope_book:
+                                scope_tag = "(b)"
+                            results_lines.append(
+                                f"{xmlfile.name}:{lno} {scope_tag} {snippet}".strip()
+                            )
+                            if book_name and current_chapter_num:
+                                structured.append(
+                                    (
+                                        translation,
+                                        book_name,
+                                        str(current_chapter_num),
+                                        str(verse_num),
+                                        snippet,
+                                    )
+                                )
+            except Exception:
+                continue
+        self._grep_results = structured
+        self._grep_index = 0 if structured else -1
+        scope_label = ""
+        if scope_translation:
+            scope_label = f"[{scope_translation}]"
+        elif scope_book:
+            scope_label = f"[{scope_book}]"
+        if results_lines:
+            text = "\n".join(results_lines[: curses.LINES - 2])
+            self._grep_override_text = text
+            self._grep_override_title = (
+                f" GREP {scope_label}/{pattern}/ ({len(results_lines)})"
+            )
+            self._last_grep = pattern
+            if record_history:
+                # Append unique or move to end
+                entry = {
+                    "pattern": pattern,
+                    "scope_translation": scope_translation,
+                    "scope_book": scope_book,
+                }
+                self._grep_history = [e for e in self._grep_history if e != entry]
+                self._grep_history.append(entry)
+                self._grep_history_idx = len(self._grep_history) - 1
+            if self._grep_index >= 0:
+                self._jump_to_grep_index(self._grep_index)
+        else:
+            curses.beep()
+            self._grep_override_text = "No matches"
+            self._grep_override_title = f" GREP {scope_label}/{pattern}/ (0)"
+            self._last_grep = pattern
+            self._grep_results = []
+            self._grep_index = -1
 
     def start_input_loop(self):
         key = None
@@ -376,8 +497,10 @@ class Main:
                 self.selected_window[1].select_last()
 
             elif key == ord("i"):
-                query = self._prompt_input("Search: ")
-                if query:
+                query = self._prompt_input_cancelable("Search: ")
+                if query is None:
+                    pass  # aborted
+                elif query:
                     found = self.selected_window[1].search_select(
                         query, start_at_current=True
                     )
@@ -388,6 +511,8 @@ class Main:
                         }
                     else:
                         curses.beep()
+                else:
+                    pass  # empty input ignored
 
             elif key == ord("n"):
                 if self._grep_results and self._grep_index >= 0:
@@ -427,6 +552,31 @@ class Main:
                         else:
                             curses.beep()
 
+            elif key == ord("R"):
+                # Redisplay raw grep list if last grep available
+                if self._last_grep:
+                    # Reconstruct raw list view from existing structured results (loss of original line numbers if not stored)
+                    if self._grep_results:
+                        lines = []
+                        for (
+                            translation,
+                            book,
+                            chapter,
+                            verse,
+                            snippet,
+                        ) in self._grep_results:
+                            lines.append(
+                                f"{translation}:{book} {chapter}:{verse} {snippet}"
+                            )
+                        text = "\n".join(lines[: curses.LINES - 2])
+                        self._grep_override_text = text
+                        self._grep_override_title = (
+                            f" GREP /{self._last_grep}/ ({len(self._grep_results)})"
+                        )
+                    else:
+                        self._grep_override_text = "No matches"
+                        self._grep_override_title = f" GREP /{self._last_grep}/ (0)"
+
             elif key == 27:  # ESC clears search or grep view
                 # Clear list search state
                 self.selected_window[1].clear_search_hint()
@@ -438,92 +588,60 @@ class Main:
                 self._last_grep = ""
                 self._grep_results = []
                 self._grep_index = -1
+                # Keep history but reset active pointer
+                self._grep_history_idx = -1
 
             elif key == ord("/"):
-                pattern = self._prompt_input("Grep: ")
-                if pattern:
-                    # Perform grep across translation XML files, map verses
-                    results_lines = []
-                    structured = []
-                    base_dir = Path(__file__).parent / "translations"
-                    verse_pattern = re.compile(
-                        r"<verse[^>]*?(?:number|n)=[\"'](\d+)[\"']"
+                pattern = self._prompt_input_cancelable("Grep: ")
+                if pattern is None:
+                    pass  # aborted
+                elif pattern:
+                    scope_translation = None
+                    scope_book = None
+                    # Auto-scope by active column
+                    if self.selected_window[1] is self.translations_win:
+                        scope_translation = self.translations_win.get_selection_tuple()[
+                            1
+                        ]
+                    elif self.selected_window[1] is self.books_win:
+                        scope_book = self.books_win.get_selection_tuple()[1]
+                    # Chapters/Verses columns: leave unscoped for now
+                    self._run_grep(
+                        pattern, scope_translation, scope_book, record_history=True
                     )
-                    chapter_pattern = re.compile(
-                        r"<chapter[^>]*?(?:number|n)=[\"'](\d+)[\"']"
-                    )
-                    book_pattern = re.compile(
-                        r"<book[^>]*?(?:number|n)=[\"'](\d+)[\"']"
-                    )
-                    for xmlfile in sorted(base_dir.glob("*.xml")):
-                        translation = xmlfile.stem
-                        try:
-                            with open(
-                                xmlfile, "r", encoding="utf-8", errors="ignore"
-                            ) as f:
-                                current_book_num = None
-                                current_chapter_num = None
-                                for lno, line in enumerate(f, 1):
-                                    # Track book/chapter context
-                                    mbook = book_pattern.search(line)
-                                    if mbook:
-                                        current_book_num = int(mbook.group(1))
-                                    mchap = chapter_pattern.search(line)
-                                    if mchap:
-                                        current_chapter_num = int(mchap.group(1))
-                                    if re.search(pattern, line, re.IGNORECASE):
-                                        # Attempt verse extraction
-                                        mverse = verse_pattern.search(line)
-                                        verse_num = (
-                                            int(mverse.group(1)) if mverse else 1
-                                        )
-                                        # Map numeric book to human name if possible
-                                        book_name = None
-                                        if (
-                                            current_book_num is not None
-                                            and 1 <= current_book_num <= len(BOOK_ORDER)
-                                        ):
-                                            book_name = BOOK_ORDER[current_book_num - 1]
-                                        snippet = line.strip()
-                                        if len(snippet) > 200:
-                                            snippet = snippet[:200] + "…"
-                                        results_lines.append(
-                                            f"{xmlfile.name}:{lno} {snippet}"
-                                        )
-                                        if book_name and current_chapter_num:
-                                            structured.append(
-                                                (
-                                                    translation,
-                                                    book_name,
-                                                    str(current_chapter_num),
-                                                    str(verse_num),
-                                                    snippet,
-                                                )
-                                            )
-                        except Exception:
-                            continue
-                    self._grep_results = structured
-                    self._grep_index = 0 if structured else -1
-                    if results_lines:
-                        text = "\n".join(results_lines[: curses.LINES - 2])
-                        self._grep_override_text = text
-                        self._grep_override_title = (
-                            f" GREP /{pattern}/ ({len(results_lines)})"
-                        )
-                        self._last_grep = pattern
-                        # If we have a structured first result, jump to it
-                        if self._grep_index >= 0:
-                            # Jump straight to first verse match (show verse view)
-                            self._jump_to_grep_index(self._grep_index)
-                    else:
-                        curses.beep()
-                        self._grep_override_text = "No matches"
-                        self._grep_override_title = f" GREP /{pattern}/ (0)"
-                        self._last_grep = pattern
-                        self._grep_results = []
-                        self._grep_index = -1
                 else:
-                    curses.beep()
+                    curses.beep()  # empty pattern
+
+            elif key == ord(","):
+                # Previous grep in history
+                if self._grep_history:
+                    self._grep_history_idx = (
+                        max(0, self._grep_history_idx - 1)
+                        if self._grep_history_idx >= 0
+                        else len(self._grep_history) - 1
+                    )
+                    item = self._grep_history[self._grep_history_idx]
+                    self._run_grep(
+                        item["pattern"],
+                        item.get("scope_translation"),
+                        item.get("scope_book"),
+                        record_history=False,
+                    )
+            elif key == ord("."):
+                # Next grep in history
+                if self._grep_history:
+                    self._grep_history_idx = (
+                        (self._grep_history_idx + 1) % len(self._grep_history)
+                        if self._grep_history_idx >= 0
+                        else 0
+                    )
+                    item = self._grep_history[self._grep_history_idx]
+                    self._run_grep(
+                        item["pattern"],
+                        item.get("scope_translation"),
+                        item.get("scope_book"),
+                        record_history=False,
+                    )
 
             elif key == ord("f"):
                 if self.selected_window[1] is not self.verses_win:
