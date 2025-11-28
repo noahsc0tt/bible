@@ -1,5 +1,5 @@
-# Bible
-Read the Bible in the terminal with Python and Curses.
+# tui-bible
+Read the Bible in any translation straight from the terminal.
 
 ![Preview](preview.png)
 
