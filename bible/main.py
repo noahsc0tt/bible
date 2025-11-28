@@ -3,7 +3,7 @@
 import curses
 
 from hyphen import Hyphenator
-from textwrap2 import wrap
+from textwrap import wrap
 
 from .reader import Reader
 from .textwin import TextWindow
@@ -123,7 +123,6 @@ class Main:
             wrap(
                 raw_text,
                 width=self.text_width - 3,
-                use_hyphenator=h_en,
             )[0: curses.LINES - 2]
         )
 
