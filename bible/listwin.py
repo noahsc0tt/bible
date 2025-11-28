@@ -171,22 +171,37 @@ class ListWindow:
         if self._search_query:
             suffix = f"[{self._search_query}"  # start bracket
             if self._search_total:
-                # show index if known
                 suffix += f" {self._search_index}/{self._search_total}"
             suffix += "]"
             base = f"{self._title} {suffix}"
-        self._win.addnstr(
-            0, 0, base.center(self._width, " "), self._width, curses.A_UNDERLINE
-        )
+        # Use actual window width to avoid errors on hidden 1x1 windows
+        try:
+            _, actual_w = self._win.getmaxyx()
+        except Exception:
+            actual_w = self._width
+        draw_w = max(1, min(self._width, actual_w))
+        title_str = base.center(draw_w, " ")
+        try:
+            self._win.addnstr(0, 0, title_str, draw_w, curses.A_UNDERLINE)
+        except Exception:
+            pass
 
     def draw(self):
+        # Skip drawing content for hidden 1x1 off-screen windows
+        try:
+            h, w = self._win.getmaxyx()
+        except Exception:
+            h, w = (0, 0)
+        is_hidden = h <= 1 or w <= 1
         self._win.clear()
         if curses.has_colors():
             self._win.bkgd(" ", curses.color_pair(1))
-        self.write_title()
+        if not is_hidden:
+            self.write_title()
+        if is_hidden:
+            return
 
         if self._item_tuples:
-            h, w = self._win.getmaxyx()
             max_rows = max(0, h - 2)
             visible = self._item_tuples[self._bounds[0] : self._bounds[1]]
             for idx, (i, val) in enumerate(visible):

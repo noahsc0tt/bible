@@ -13,10 +13,10 @@ from .reader import Reader, BOOK_ORDER
 from .textwin import TextWindow
 from .listwin import ListWindow
 
-TRANSLATIONS_WIDTH = 6
-BOOKS_WIDTH = 14
-CHAPTERS_WIDTH = 4
-VERSES_WIDTH = 4
+TRANSLATIONS_WIDTH = 8
+BOOKS_WIDTH = 20
+CHAPTERS_WIDTH = 6
+VERSES_WIDTH = 6
 
 h_en = Hyphenator("en_US")
 
@@ -202,9 +202,19 @@ class Main:
         )
 
     def layout_windows(self):
-        if self.sidebars_visible:
-            start_x = TRANSLATIONS_WIDTH + BOOKS_WIDTH + CHAPTERS_WIDTH + VERSES_WIDTH
-            self.text_width = curses.COLS - start_x
+        # Ensure text area keeps majority of horizontal space; sacrifice sidebars if too narrow
+        total_sidebar_width = (
+            TRANSLATIONS_WIDTH + BOOKS_WIDTH + CHAPTERS_WIDTH + VERSES_WIDTH
+        )
+        min_text_fraction = 0.6  # Require at least 60% of width for text
+        available_cols = curses.COLS
+        sidebars_fit = self.sidebars_visible and (
+            (available_cols - total_sidebar_width) / max(1, available_cols)
+            >= min_text_fraction
+        )
+        if sidebars_fit:
+            start_x = total_sidebar_width
+            self.text_width = available_cols - start_x
             self.text_win = TextWindow(
                 self.stdscr.derwin(curses.LINES, self.text_width, 0, start_x),
                 self.text_width,
@@ -219,27 +229,49 @@ class Main:
             ]:
                 win.draw()
         else:
-            self.text_width = curses.COLS
-            self.text_win = TextWindow(
-                self.stdscr.derwin(curses.LINES, self.text_width, 0, 0),
-                self.text_width,
-            )
-            self.deactivate_all_windows()
+            # Show only the currently active sidebar column at left; move others off-screen
+            active_win = self.selected_window[1]
+            if active_win is self.translations_win:
+                single_width = TRANSLATIONS_WIDTH
+            elif active_win is self.books_win:
+                single_width = BOOKS_WIDTH
+            elif active_win is self.chapters_win:
+                single_width = CHAPTERS_WIDTH
+            elif active_win is self.verses_win:
+                single_width = VERSES_WIDTH
+            else:
+                single_width = 0
+            # Recreate active window at x=0
+            active_win._win = self.stdscr.derwin(curses.LINES, single_width, 0, 0)
+            # Move other windows to 1x1 hidden windows so they no longer blank out text
             for win in [
                 self.translations_win,
                 self.books_win,
                 self.chapters_win,
                 self.verses_win,
             ]:
-                w = win._win
-                w.clear()
-                w.refresh()
+                if win is not active_win:
+                    win._win = self.stdscr.derwin(
+                        1, 1, curses.LINES - 1, max(0, available_cols - 1)
+                    )
+            # Create text window to the right of active column
+            self.text_width = max(1, available_cols - single_width)
+            self.text_win = TextWindow(
+                self.stdscr.derwin(curses.LINES, self.text_width, 0, single_width),
+                self.text_width,
+            )
+            active_win.set_active(True)
+            active_win.draw()
 
     def initialize_selections(self):
         self.windows_tuples = make_enumeration(
             [self.translations_win, self.books_win, self.chapters_win, self.verses_win]
         )
-        self.selected_window = self.windows_tuples[1]
+        # Start in verse mode
+        for i, win in self.windows_tuples:
+            if win is self.verses_win:
+                self.selected_window = (i, win)
+                break
         self.selected_window[1].set_active(True)
 
     def update_selections(self):
@@ -286,77 +318,8 @@ class Main:
             grep_indicator = (
                 f"({term} {self._grep_index + 1}/{len(self._grep_results)}) "
             )
-        # Abbreviate book name for compact title, keep indicator at far left
-        # Abbreviation mapping for book display
-        ABBREV = {
-            "Genesis": "Gen",
-            "Exodus": "Ex",
-            "Leviticus": "Lev",
-            "Numbers": "Num",
-            "Deuteronomy": "Deut",
-            "Joshua": "Josh",
-            "Judges": "Jg",
-            "Ruth": "Ruth",
-            "1 Samuel": "1S",
-            "2 Samuel": "2S",
-            "1 Kings": "1K",
-            "2 Kings": "2K",
-            "1 Chronicles": "1Ch",
-            "2 Chronicles": "2Ch",
-            "Ezra": "Ezra",
-            "Nehemiah": "Ne",
-            "Esther": "Es",
-            "Job": "Job",
-            "Psalms": "Ps",
-            "Proverbs": "Prov",
-            "Ecclesiastes": "Ec",
-            "Song of Solomon": "Song",
-            "Isaiah": "Is",
-            "Jeremiah": "Je",
-            "Lamentations": "La",
-            "Ezekiel": "Eze",
-            "Daniel": "Dan",
-            "Hosea": "Hos",
-            "Joel": "Joel",
-            "Amos": "Amos",
-            "Obadiah": "Ob",
-            "Jonah": "Jnh",
-            "Micah": "Mi",
-            "Nahum": "Na",
-            "Habakkuk": "Hab",
-            "Zephaniah": "Zp",
-            "Haggai": "Hg",
-            "Zechariah": "Zc",
-            "Malachi": "Mal",
-            "Matthew": "Mt",
-            "Mark": "Mk",
-            "Luke": "Lk",
-            "John": "Jn",
-            "Acts": "Ac",
-            "Romans": "Rm",
-            "1 Corinthians": "1Co",
-            "2 Corinthians": "2Co",
-            "Galatians": "Ga",
-            "Ephesians": "Ep",
-            "Philippians": "Php",
-            "Colossians": "Col",
-            "1 Thessalonians": "1Th",
-            "2 Thessalonians": "2Th",
-            "1 Timothy": "1Ti",
-            "2 Timothy": "2Ti",
-            "Titus": "Ti",
-            "Philemon": "Phm",
-            "Hebrews": "Heb",
-            "James": "Ja",
-            "1 Peter": "1P",
-            "2 Peter": "2P",
-            "1 John": "1J",
-            "2 John": "2J",
-            "3 John": "3J",
-            "Jude": "Jud",
-            "Revelation": "Rv",
-        }
-        book_display = ABBREV.get(book_name, book_name)
+        # Show full book name in the title
+        book_display = book_name
         text_title = f" {grep_indicator}{book_display} {chapter_name[0]}:{verse_int} [{trans_name}]"
 
         raw_text = self.reader.get_chapter_text(
@@ -402,6 +365,8 @@ class Main:
             new_windex = len(self.windows_tuples) - 1
         self.selected_window = self.windows_tuples[new_windex]
         self.selected_window[1].set_active(True)
+        # Relayout so that in narrow mode the newly active column is shown
+        self.layout_windows()
 
     def _open_in_frogmouth(self):
         trans = self.translations_win.get_selection_tuple()[1]
