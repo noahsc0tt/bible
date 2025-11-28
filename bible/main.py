@@ -101,6 +101,16 @@ class Main:
                 self.stdscr.derwin(curses.LINES, self.text_width, 0, start_x),
                 self.text_width,
             )
+            # Ensure sidebars are redrawn and active state restored
+            self.deactivate_all_windows()
+            self.selected_window[1].set_active(True)
+            for win in [
+                self.translations_win,
+                self.books_win,
+                self.chapters_win,
+                self.verses_win,
+            ]:
+                win.draw()
         else:
             # Hide sidebars visually by covering them with a full-width text window
             self.text_width = curses.COLS
@@ -108,7 +118,8 @@ class Main:
                 self.stdscr.derwin(curses.LINES, self.text_width, 0, 0),
                 self.text_width,
             )
-            # Clear sidebars so they don't show through
+            # Deactivate and clear sidebars so they don't show through
+            self.deactivate_all_windows()
             for win in [
                 self.translations_win,
                 self.books_win,
@@ -205,8 +216,10 @@ class Main:
             elif key == ord("g"):
                 self.selected_window[1].select_first()
 
-            elif key == ord("G"):
-                self.selected_window[1].select_last()
+            elif key == ord("s"):
+                # Toggle sidebar visibility
+                self.sidebars_visible = not self.sidebars_visible
+                self.layout_windows()
 
             self.update_selections()
             self.update_text()
