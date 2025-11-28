@@ -12,6 +12,17 @@ class ListWindow:
         self._item_tuples = item_tuples
         self.select_first()
 
+    def select_value(self, value):
+        for i, v in self._item_tuples:
+            if v == value:
+                self._selected_tuple = (i, v)
+                start = max(0, min(i, max(0, len(self._item_tuples) - self.MAX_ITEMS)))
+                self._bounds = (start, start + self.MAX_ITEMS)
+                self.draw()
+                return
+        # Fallback if value not found
+        self.select_first()
+
     def set_active(self, is_active):
         self._active = is_active
         self.draw()

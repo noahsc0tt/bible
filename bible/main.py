@@ -5,6 +5,8 @@ import curses
 from hyphen import Hyphenator
 from textwrap import wrap
 import re
+import json
+import os
 
 from .reader import Reader
 from .textwin import TextWindow
@@ -39,12 +41,74 @@ class Main:
         self.sidebars_visible = True
         self.initialize_windows()
         self.initialize_selections()
+        # Apply any previously saved position before first layout/update
+        self._apply_loaded_position()
         self.layout_windows()
 
         self.update_selections()
         self.update_text()
 
         self.start_input_loop()
+
+    def _state_file(self):
+        return os.path.join(os.path.expanduser("~"), ".bible_last.json")
+
+    def _load_last_position(self):
+        self._loaded_state = None
+        try:
+            with open(self._state_file(), "r") as f:
+                st = json.load(f)
+        except Exception:
+            return
+        translations = self.reader.get_translations()
+        trans = st.get("translation")
+        if trans in translations:
+            # Set root early so books/chapters reflect the translation
+            self.reader.set_root(trans)
+            self._loaded_state = {
+                "translation": trans,
+                "book": st.get("book"),
+                "chapter": str(st.get("chapter"))
+                if st.get("chapter") is not None
+                else None,
+                "verse": str(st.get("verse")) if st.get("verse") is not None else None,
+            }
+
+    def _apply_loaded_position(self):
+        st = getattr(self, "_loaded_state", None)
+        if not st:
+            return
+        try:
+            # translation
+            self.translations_win.select_value(st["translation"])
+            self.update_selections()
+            # book
+            if st.get("book"):
+                self.books_win.select_value(st["book"])
+                self.update_selections()
+            # chapter
+            if st.get("chapter"):
+                self.chapters_win.select_value(st["chapter"])
+                self.update_selections()
+            # verse
+            if st.get("verse"):
+                self.verses_win.select_value(st["verse"])
+        except Exception:
+            # If anything goes wrong, fall back to defaults
+            pass
+
+    def _save_position(self):
+        try:
+            data = {
+                "translation": self.translations_win.get_selection_tuple()[1],
+                "book": self.books_win.get_selection_tuple()[1],
+                "chapter": self.chapters_win.get_selection_tuple()[1],
+                "verse": self.verses_win.get_selection_tuple()[1],
+            }
+            with open(self._state_file(), "w") as f:
+                json.dump(data, f)
+        except Exception:
+            pass
 
     def initialize_reader(self):
         self.reader = Reader()
@@ -57,6 +121,7 @@ class Main:
         if not default:
             raise RuntimeError("No supported translations found")
         self.reader.set_root(default)
+        self._load_last_position()
 
     def initialize_windows(self):
         # Create sidebar windows (left columns)
@@ -227,13 +292,15 @@ class Main:
             elif key == ord("G"):
                 self.selected_window[1].select_last()
 
-            elif key == ord("s"):
+            elif key == ord("f"):
                 # Toggle sidebar visibility
                 self.sidebars_visible = not self.sidebars_visible
                 self.layout_windows()
 
             self.update_selections()
             self.update_text()
+        # Persist last position on exit
+        self._save_position()
 
 
 def main():
