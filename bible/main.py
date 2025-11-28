@@ -287,11 +287,76 @@ class Main:
                 f"({term} {self._grep_index + 1}/{len(self._grep_results)}) "
             )
         # Abbreviate book name for compact title, keep indicator at far left
-        if len(book_name) > 9:
-            # Use first 4 chars + ellipsis for longer names
-            book_display = book_name[:4] + "..."
-        else:
-            book_display = book_name
+        # Abbreviation mapping for book display
+        ABBREV = {
+            "Genesis": "Gen",
+            "Exodus": "Ex",
+            "Leviticus": "Lev",
+            "Numbers": "Num",
+            "Deuteronomy": "Deut",
+            "Joshua": "Josh",
+            "Judges": "Jg",
+            "Ruth": "Ruth",
+            "1 Samuel": "1S",
+            "2 Samuel": "2S",
+            "1 Kings": "1K",
+            "2 Kings": "2K",
+            "1 Chronicles": "1Ch",
+            "2 Chronicles": "2Ch",
+            "Ezra": "Ezra",
+            "Nehemiah": "Ne",
+            "Esther": "Es",
+            "Job": "Job",
+            "Psalms": "Ps",
+            "Proverbs": "Prov",
+            "Ecclesiastes": "Ec",
+            "Song of Solomon": "Song",
+            "Isaiah": "Is",
+            "Jeremiah": "Je",
+            "Lamentations": "La",
+            "Ezekiel": "Eze",
+            "Daniel": "Dan",
+            "Hosea": "Hos",
+            "Joel": "Joel",
+            "Amos": "Amos",
+            "Obadiah": "Ob",
+            "Jonah": "Jnh",
+            "Micah": "Mi",
+            "Nahum": "Na",
+            "Habakkuk": "Hab",
+            "Zephaniah": "Zp",
+            "Haggai": "Hg",
+            "Zechariah": "Zc",
+            "Malachi": "Mal",
+            "Matthew": "Mt",
+            "Mark": "Mk",
+            "Luke": "Lk",
+            "John": "Jn",
+            "Acts": "Ac",
+            "Romans": "Rm",
+            "1 Corinthians": "1Co",
+            "2 Corinthians": "2Co",
+            "Galatians": "Ga",
+            "Ephesians": "Ep",
+            "Philippians": "Php",
+            "Colossians": "Col",
+            "1 Thessalonians": "1Th",
+            "2 Thessalonians": "2Th",
+            "1 Timothy": "1Ti",
+            "2 Timothy": "2Ti",
+            "Titus": "Ti",
+            "Philemon": "Phm",
+            "Hebrews": "Heb",
+            "James": "Ja",
+            "1 Peter": "1P",
+            "2 Peter": "2P",
+            "1 John": "1J",
+            "2 John": "2J",
+            "3 John": "3J",
+            "Jude": "Jud",
+            "Revelation": "Rv",
+        }
+        book_display = ABBREV.get(book_name, book_name)
         text_title = f" {grep_indicator}{book_display} {chapter_name[0]}:{verse_int} [{trans_name}]"
 
         raw_text = self.reader.get_chapter_text(
@@ -386,7 +451,13 @@ class Main:
         self._grep_override_title = None
 
     def _run_grep(
-        self, pattern, scope_translation=None, scope_book=None, record_history=False
+        self,
+        pattern,
+        scope_translation=None,
+        scope_book=None,
+        scope_chapter=None,
+        scope_verse=None,
+        record_history=False,
     ):
         # Perform grep across translation XML files (with optional scope), map verses
         results_lines = []
@@ -401,6 +472,19 @@ class Main:
                 scoped_book_num = BOOK_ORDER.index(scope_book) + 1
             except Exception:
                 scoped_book_num = None
+        scoped_chapter_num = None
+        if scope_chapter:
+            try:
+                scoped_chapter_num = int(scope_chapter)
+            except Exception:
+                scoped_chapter_num = None
+        # Apply verse scope if provided
+        scoped_verse_num = None
+        if scope_verse:
+            try:
+                scoped_verse_num = int(scope_verse)
+            except Exception:
+                scoped_verse_num = None
         for xmlfile in sorted(base_dir.glob("*.xml")):
             translation = xmlfile.stem
             if scope_translation and translation != scope_translation:
@@ -409,6 +493,7 @@ class Main:
                 with open(xmlfile, "r", encoding="utf-8", errors="ignore") as f:
                     current_book_num = None
                     current_chapter_num = None
+                    current_verse_num = None
                     for lno, line in enumerate(f, 1):
                         mbook = book_pattern.search(line)
                         if mbook:
@@ -416,11 +501,27 @@ class Main:
                         mchap = chapter_pattern.search(line)
                         if mchap:
                             current_chapter_num = int(mchap.group(1))
-                        if scoped_book_num and current_book_num != scoped_book_num:
+                        mverse = verse_pattern.search(line)
+                        if mverse:
+                            current_verse_num = int(mverse.group(1))
+                        # Apply scope filters strictly
+                        if (
+                            scoped_book_num is not None
+                            and current_book_num != scoped_book_num
+                        ):
+                            continue
+                        if (
+                            scoped_chapter_num is not None
+                            and current_chapter_num != scoped_chapter_num
+                        ):
+                            continue
+                        if (
+                            scoped_verse_num is not None
+                            and current_verse_num != scoped_verse_num
+                        ):
                             continue
                         if re.search(pattern, line, re.IGNORECASE):
-                            mverse = verse_pattern.search(line)
-                            verse_num = int(mverse.group(1)) if mverse else 1
+                            verse_num = current_verse_num if current_verse_num else 1
                             book_name = None
                             if (
                                 current_book_num is not None
@@ -428,15 +529,9 @@ class Main:
                             ):
                                 book_name = BOOK_ORDER[current_book_num - 1]
                             snippet = line.strip()
-                            if len(snippet) > 200:
-                                snippet = snippet[:200] + "…"
-                            scope_tag = ""
-                            if scope_translation:
-                                scope_tag = "(t)"
-                            elif scope_book:
-                                scope_tag = "(b)"
+                            cleaned = re.sub(r"<[^>]+>", "", snippet)
                             results_lines.append(
-                                f"{xmlfile.name}:{lno} {scope_tag} {snippet}".strip()
+                                f"{translation} {book_name or ''} {current_chapter_num or ''}:{verse_num} — {cleaned}"
                             )
                             if book_name and current_chapter_num:
                                 structured.append(
@@ -445,7 +540,7 @@ class Main:
                                         book_name,
                                         str(current_chapter_num),
                                         str(verse_num),
-                                        snippet,
+                                        cleaned,
                                     )
                                 )
             except Exception:
@@ -458,15 +553,12 @@ class Main:
             scope_label = f"[{scope_translation}]"
         elif scope_book:
             scope_label = f"[{scope_book}]"
+        elif scoped_chapter_num is not None:
+            scope_label = f"[Chapter {scoped_chapter_num}]"
+        # Verse label removed (verse-scoped search disabled)
         if results_lines:
-            # Build a formatted occurrences list from structured results
-            formatted_lines = []
-            for translation, book, chapter, verse, snippet in structured:
-                cleaned = re.sub(r"<[^>]+>", "", snippet)
-                line = f"{translation} {book} {chapter}:{verse} — {cleaned}"
-                formatted_lines.append(line)
-            if not formatted_lines:
-                formatted_lines = results_lines
+            # Use already-cleaned results_lines for display
+            formatted_lines = results_lines
             # Wrap lines to text window width
             wrap_width = max(1, self.text_width - 3)
             wrapped = []
@@ -476,17 +568,17 @@ class Main:
                 wrapped.append("")
             text = "\n".join(wrapped) if wrapped else "\n".join(formatted_lines)
             self._grep_override_text = text
-
             self._grep_override_title = (
                 f" GREP {scope_label}/{pattern}/ ({len(formatted_lines)})"
             )
             self._last_grep = pattern
             if record_history:
-                # Append unique or move to end
                 entry = {
                     "pattern": pattern,
                     "scope_translation": scope_translation,
                     "scope_book": scope_book,
+                    "scope_chapter": scoped_chapter_num,
+                    "scope_verse": scoped_verse_num,
                 }
                 self._grep_history = [e for e in self._grep_history if e != entry]
                 self._grep_history.append(entry)
@@ -542,6 +634,112 @@ class Main:
                 else:
                     pass  # empty input ignored
 
+            elif key == ord("s"):
+                # Jump via reference like 'Prov 18:10' or 'John 3:16'
+                ref = self._prompt_input_cancelable("Go to reference: ")
+                if ref is not None and ref.strip():
+                    ref = ref.strip()
+                    m = re.match(r"([1-3]?[A-Za-z]+)\s+(\d+)(?::(\d+))?", ref)
+                    if m:
+                        book_abbrev = m.group(1)
+                        chapter_num = m.group(2)
+                        verse_num = m.group(3)
+                        # reverse lookup in ABBREV mapping
+                        # Recreate same ABBREV dict locally (could refactor to class attr)
+                        ABBREV = {
+                            "Genesis": "Gen",
+                            "Exodus": "Exo",
+                            "Leviticus": "Lev",
+                            "Numbers": "Num",
+                            "Deuteronomy": "Deut",
+                            "Joshua": "Josh",
+                            "Judges": "Judg",
+                            "Ruth": "Ruth",
+                            "1 Samuel": "1Sam",
+                            "2 Samuel": "2Sam",
+                            "1 Kings": "1Kgs",
+                            "2 Kings": "2Kgs",
+                            "1 Chronicles": "1Chr",
+                            "2 Chronicles": "2Chr",
+                            "Ezra": "Ezra",
+                            "Nehemiah": "Neh",
+                            "Esther": "Esth",
+                            "Job": "Job",
+                            "Psalms": "Ps",
+                            "Proverbs": "Prov",
+                            "Ecclesiastes": "Eccl",
+                            "Song of Solomon": "Song",
+                            "Isaiah": "Isa",
+                            "Jeremiah": "Jer",
+                            "Lamentations": "Lam",
+                            "Ezekiel": "Ezek",
+                            "Daniel": "Dan",
+                            "Hosea": "Hos",
+                            "Joel": "Joel",
+                            "Amos": "Amos",
+                            "Obadiah": "Obad",
+                            "Jonah": "Jonah",
+                            "Micah": "Mic",
+                            "Nahum": "Nah",
+                            "Habakkuk": "Hab",
+                            "Zephaniah": "Zeph",
+                            "Haggai": "Hag",
+                            "Zechariah": "Zech",
+                            "Malachi": "Mal",
+                            "Matthew": "Matt",
+                            "Mark": "Mark",
+                            "Luke": "Luke",
+                            "John": "John",
+                            "Acts": "Acts",
+                            "Romans": "Rom",
+                            "1 Corinthians": "1Cor",
+                            "2 Corinthians": "2Cor",
+                            "Galatians": "Gal",
+                            "Ephesians": "Eph",
+                            "Philippians": "Phil",
+                            "Colossians": "Col",
+                            "1 Thessalonians": "1Th",
+                            "2 Thessalonians": "2Th",
+                            "1 Timothy": "1Tim",
+                            "2 Timothy": "2Tim",
+                            "Titus": "Titus",
+                            "Philemon": "Phlm",
+                            "Hebrews": "Heb",
+                            "James": "Jas",
+                            "1 Peter": "1Pet",
+                            "2 Peter": "2Pet",
+                            "1 John": "1Jn",
+                            "2 John": "2Jn",
+                            "3 John": "3Jn",
+                            "Jude": "Jude",
+                            "Revelation": "Rev",
+                        }
+                        # Build reverse mapping including numeric prefixes stripped variants
+                        rev = {}
+                        for full, ab in ABBREV.items():
+                            rev[ab.lower()] = full
+                        target_full = rev.get(book_abbrev.lower())
+                        if target_full and target_full in self.reader.get_books():
+                            try:
+                                self.books_win.select_value(target_full)
+                            except Exception:
+                                pass
+                            self.update_selections()
+                            try:
+                                self.chapters_win.select_value(str(int(chapter_num)))
+                            except Exception:
+                                pass
+                            self.update_selections()
+                            if verse_num:
+                                try:
+                                    self.verses_win.select_value(str(int(verse_num)))
+                                except Exception:
+                                    pass
+                        else:
+                            curses.beep()
+                    else:
+                        curses.beep()
+
             elif key == ord("n"):
                 if self._grep_results and self._grep_index >= 0:
                     # Advance grep result navigation
@@ -581,12 +779,14 @@ class Main:
                             curses.beep()
 
             elif key == ord("r"):
-                # Rerun last grep scoped by current column, then show formatted results menu
+                # Rerun last grep with same mapping as initial '/'
                 scope_translation = None
                 scope_book = None
-                if self.selected_window[1] is self.translations_win:
+                if self.selected_window[1] is self.books_win:
                     scope_translation = self.translations_win.get_selection_tuple()[1]
-                elif self.selected_window[1] is self.books_win:
+                elif self.selected_window[1] is self.chapters_win:
+                    scope_book = self.books_win.get_selection_tuple()[1]
+                elif self.selected_window[1] is self.verses_win:
                     scope_book = self.books_win.get_selection_tuple()[1]
                 pattern = self._last_grep
                 if not pattern and self._grep_history:
@@ -595,8 +795,22 @@ class Main:
                     scope_translation = hist.get("scope_translation", scope_translation)
                     scope_book = hist.get("scope_book", scope_book)
                 if pattern:
+                    # Include current book/chapter/verse scope if those columns are active
+                    scope_chapter = None
+                    scope_verse = None
+                    if self.selected_window[1] is self.chapters_win:
+                        scope_chapter = (
+                            None  # only book scope for chapters column rerun
+                        )
+                    elif self.selected_window[1] is self.verses_win:
+                        scope_chapter = self.chapters_win.get_selection_tuple()[1]
                     self._run_grep(
-                        pattern, scope_translation, scope_book, record_history=False
+                        pattern,
+                        scope_translation,
+                        scope_book,
+                        scope_chapter,
+                        scope_verse,
+                        record_history=False,
                     )
                     formatted_lines = []
                     for (
@@ -646,18 +860,31 @@ class Main:
                 if pattern is None:
                     pass  # aborted
                 elif pattern:
+                    # New scope mapping:
+                    # translations column -> grep ALL (no scope)
+                    # books column -> scope_translation only
+                    # chapters column -> scope_book only (all translations)
+                    # verses column -> scope_book + scope_chapter
                     scope_translation = None
                     scope_book = None
-                    # Auto-scope by active column
-                    if self.selected_window[1] is self.translations_win:
+                    scope_chapter = None
+                    scope_verse = None
+                    if self.selected_window[1] is self.books_win:
                         scope_translation = self.translations_win.get_selection_tuple()[
                             1
                         ]
-                    elif self.selected_window[1] is self.books_win:
+                    elif self.selected_window[1] is self.chapters_win:
                         scope_book = self.books_win.get_selection_tuple()[1]
-                    # Chapters/Verses columns: leave unscoped for now
+                    elif self.selected_window[1] is self.verses_win:
+                        scope_book = self.books_win.get_selection_tuple()[1]
+                        scope_chapter = self.chapters_win.get_selection_tuple()[1]
                     self._run_grep(
-                        pattern, scope_translation, scope_book, record_history=True
+                        pattern,
+                        scope_translation,
+                        scope_book,
+                        scope_chapter,
+                        scope_verse,
+                        record_history=True,
                     )
                 else:
                     curses.beep()  # empty pattern
@@ -675,6 +902,8 @@ class Main:
                         item["pattern"],
                         item.get("scope_translation"),
                         item.get("scope_book"),
+                        item.get("scope_chapter"),
+                        item.get("scope_verse"),
                         record_history=False,
                     )
                     # Show formatted, wrapped list for current results
@@ -714,6 +943,8 @@ class Main:
                         item["pattern"],
                         item.get("scope_translation"),
                         item.get("scope_book"),
+                        item.get("scope_chapter"),
+                        item.get("scope_verse"),
                         record_history=False,
                     )
                     # Show formatted, wrapped list for current results

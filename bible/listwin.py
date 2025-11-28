@@ -186,17 +186,25 @@ class ListWindow:
         self.write_title()
 
         if self._item_tuples:
-            for i, val in self._item_tuples[self._bounds[0] : self._bounds[1]]:
-                y = 1 + i - self._bounds[0]
-                str_len = self._width - 2
-                string = str(val).ljust(str_len)
+            h, w = self._win.getmaxyx()
+            max_rows = max(0, h - 2)
+            visible = self._item_tuples[self._bounds[0] : self._bounds[1]]
+            for idx, (i, val) in enumerate(visible):
+                if idx >= max_rows:
+                    break
+                y = 1 + idx
+                str_len = max(0, min(self._width - 2, w - 2))
+                s = str(val)
+                if len(s) > str_len:
+                    s = s[:str_len]
+                string = s.ljust(str_len)
 
                 if i == self._selected_tuple[0]:
                     self._win.addnstr(
                         y,
                         0,
                         ">{0}".format(string),
-                        str_len + 1,
+                        min(str_len + 1, w - 1),
                         curses.A_STANDOUT if self._active else curses.A_BOLD,
                     )
                 else:
