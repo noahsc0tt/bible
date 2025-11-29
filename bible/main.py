@@ -202,16 +202,33 @@ class Main:
         )
 
     def layout_windows(self):
-        # Ensure text area keeps majority of horizontal space; sacrifice sidebars if too narrow
+        # Fullscreen mode: when sidebars_visible is False, hide all sidebars regardless of width
+        available_cols = curses.COLS
+        if not self.sidebars_visible:
+            self.text_width = available_cols
+            self.text_win = TextWindow(
+                self.stdscr.derwin(curses.LINES, self.text_width, 0, 0),
+                self.text_width,
+            )
+            # Move all sidebar windows off-screen
+            for win in [
+                self.translations_win,
+                self.books_win,
+                self.chapters_win,
+                self.verses_win,
+            ]:
+                win._win = self.stdscr.derwin(
+                    1, 1, curses.LINES - 1, max(0, available_cols - 1)
+                )
+            return
+        # Non-fullscreen: ensure text area keeps majority of horizontal space; sacrifice sidebars if too narrow
         total_sidebar_width = (
             TRANSLATIONS_WIDTH + BOOKS_WIDTH + CHAPTERS_WIDTH + VERSES_WIDTH
         )
         min_text_fraction = 0.6  # Require at least 60% of width for text
-        available_cols = curses.COLS
-        sidebars_fit = self.sidebars_visible and (
-            (available_cols - total_sidebar_width) / max(1, available_cols)
-            >= min_text_fraction
-        )
+        sidebars_fit = (available_cols - total_sidebar_width) / max(
+            1, available_cols
+        ) >= min_text_fraction
         if sidebars_fit:
             # Recreate all sidebar windows to avoid stale narrow-mode hidden windows
             start_x = 0
@@ -354,12 +371,6 @@ class Main:
             lines.append("")
         text = "\n".join(lines[0 : curses.LINES - 2])
 
-        hint = ""
-        if trans_name == "BSB":
-            base_hint = "[Enter]: open current chapter in Frogmouth"
-            wrap_width = max(1, self.text_width - 3)
-            hint_lines = wrap(base_hint, width=wrap_width)
-            hint = "\n" + "\n".join(hint_lines)
         self.text_win.update_text_title(text_title)
         highlight_terms = []
         if self._grep_results and self._grep_index >= 0 and self._last_grep:
@@ -367,7 +378,7 @@ class Main:
         # Also highlight active list search term in verses if applicable (book/chapter lists not matched here but harmless)
         if self._last_search.get("query"):
             highlight_terms.append(self._last_search.get("query"))
-        self.text_win.update_text(text + hint, highlight_terms=highlight_terms or None)
+        self.text_win.update_text(text, highlight_terms=highlight_terms or None)
 
     def deactivate_all_windows(self):
         for i, win in self.windows_tuples:
@@ -486,7 +497,7 @@ class Main:
                 scoped_chapter_num = int(scope_chapter)
             except Exception:
                 scoped_chapter_num = None
-        if not all:
+        else:
             for xmlfile in sorted(base_dir.glob("*.xml")):
                 translation = xmlfile.stem
                 if scope_translation and translation != scope_translation:
