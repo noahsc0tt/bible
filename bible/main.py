@@ -40,6 +40,10 @@ class Main:
             curses.set_escdelay(25)  # Reduce default ~1000ms ESC delay
         except Exception:
             pass
+        try:
+            curses.curs_set(0)  # hide cursor to prevent flicker during repeats
+        except Exception:
+            pass
 
         self._last_search = {"win": None, "query": ""}
         self._last_grep = ""
@@ -639,25 +643,37 @@ class Main:
                 key == curses.KEY_UP or key == ord("k")
             ) and self._grep_override_text is not None:
                 if self._grep_results:
+                    prev = self._grep_pane_index
                     self._grep_pane_index = max(0, self._grep_pane_index - 1)
+                    if self._grep_pane_index == prev:
+                        continue
                     self._build_grep_pane_text()
                 else:
                     curses.beep()
+                    continue
             elif (
                 key == curses.KEY_DOWN or key == ord("j")
             ) and self._grep_override_text is not None:
                 if self._grep_results:
+                    prev = self._grep_pane_index
                     self._grep_pane_index = min(
                         len(self._grep_results) - 1, self._grep_pane_index + 1
                     )
+                    if self._grep_pane_index == prev:
+                        continue
                     self._build_grep_pane_text()
                 else:
                     curses.beep()
+                    continue
             elif key == curses.KEY_UP or key == ord("k"):
-                self.selected_window[1].increment_selection(-1)
+                moved = self.selected_window[1].increment_selection(-1)
+                if not moved:
+                    continue
 
             elif key == curses.KEY_DOWN or key == ord("j"):
-                self.selected_window[1].increment_selection(1)
+                moved = self.selected_window[1].increment_selection(1)
+                if not moved:
+                    continue
 
             elif key == curses.KEY_LEFT or key == ord("h"):
                 self.increment_window(-1)
